@@ -37,8 +37,40 @@ async def get_credits(user: dict = Depends(get_current_user)):
 
 @router.post("/ai")
 async def create_ai_task(request: AIRequest, user: dict = Depends(get_current_user)):
-    # Debug mode
+    if not BFL_API_KEY:
+        raise HTTPException(status_code=500, detail="BFL_API_KEY not set")
+
+    headers = {
+        "accept": "application/json",
+        "x-key": BFL_API_KEY,
+        "Content-Type": "application/json",
+    }
+
+    # Pick endpoint based on model
+    if request.model == "flux-pro-1.1-model":
+        bfl_endpoint = "https://api.bfl.ai/v1/flux-pro-1.1"
+    elif request.model == "flux-pro-1.1-ultra-model":
+        bfl_endpoint = "https://api.bfl.ai/v1/flux-pro-1.1-ultra"
+    else:
+        bfl_endpoint = "https://api.bfl.ai/v1/flux-kontext-pro"
+
+    # Build payload
+    payload = {"prompt": request.input}
+    params = request.parameters or {}
+    print("THIS ARE PARAMS: " , params)
+    payload["safety_tolerance"]=6
+    if request.model == "flux-pro-1.1-model":
+        # flux-pro-1.1 → width/height
+        payload["width"] = params.get("width", 1024)
+        payload["height"] = params.get("height", 1024)
+    else:
+        # kontext → aspect_ratio
+        payload["aspect_ratio"] = params.get("aspect_ratio", "1:1")
+
+    # Debug mode: just log and return dummy task
     if os.getenv("BFL_DEBUG_MODE", "false").lower() == "true":
+        print(f"🟡 [DEBUG] Would POST to: {bfl_endpoint}")
+        print(f"🟡 [DEBUG] Payload: {payload}")
         task_id = f"debug-{len(tasks_store)}"
         tasks_store[task_id] = {
             "status": "Ready",
@@ -49,38 +81,12 @@ async def create_ai_task(request: AIRequest, user: dict = Depends(get_current_us
         }
         return {"task_id": task_id}
 
-    # Normal mode: create BFL task
-    if not BFL_API_KEY:
-        raise HTTPException(status_code=500, detail="BFL_API_KEY not set")
-
-    headers = {
-        "accept": "application/json",
-        "x-key": BFL_API_KEY,
-        "Content-Type": "application/json"
-    }
-    payload = {
-        "prompt": request.input,
-    }
-
-    # Add aspect_ratio if given (default to "1:1")
-    aspect_ratio = (request.parameters or {}).get("aspect_ratio")
-    if aspect_ratio:
-        payload["aspect_ratio"] = aspect_ratio
-    else:
-        payload["aspect_ratio"] = "1:1"
-
-    # Add model if provided
-    if request.model:
-        payload["model"] = request.model
-
-
-
-    resp = requests.post(BFL_ENDPOINT, headers=headers, json=payload)
-
+    # Normal mode: real request
+    resp = requests.post(bfl_endpoint, headers=headers, json=payload)
     if resp.status_code != 200:
         raise HTTPException(
             status_code=resp.status_code,
-            detail=f"Invalid BFL response: {resp.json()}"
+            detail=f"Invalid BFL response: {resp.json()}",
         )
 
     task = resp.json()
@@ -88,9 +94,13 @@ async def create_ai_task(request: AIRequest, user: dict = Depends(get_current_us
     if not polling_url:
         raise HTTPException(status_code=500, detail="No polling_url in BFL response")
 
-    # Store the task, include uid for later credit deduction
+    # Store task
     task_id = f"task-{len(tasks_store)}"
-    tasks_store[task_id] = {"polling_url": polling_url, "status": "Pending", "uid": user["uid"]}
+    tasks_store[task_id] = {
+        "polling_url": polling_url,
+        "status": "Pending",
+        "uid": user["uid"],
+    }
 
     return {"task_id": task_id}
 
