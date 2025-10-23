@@ -18,6 +18,7 @@ BFL_ENDPOINT = "https://api.bfl.ai/v1/flux-kontext-pro"
 
 tasks_store = {}
 
+moderation_level = 0 #0 is super moderated, 6 is not moderated
 
 @router.get("/credits")
 async def get_credits(user: dict = Depends(get_current_user)):
@@ -58,7 +59,7 @@ async def create_ai_task(request: AIRequest, user: dict = Depends(get_current_us
     payload = {"prompt": request.input}
     params = request.parameters or {}
     print("THIS ARE PARAMS: " , params)
-    payload["safety_tolerance"]=6
+    
     if request.model == "flux-pro-1.1-model":
         # flux-pro-1.1 → width/height
         payload["width"] = params.get("width", 1024)
@@ -66,6 +67,10 @@ async def create_ai_task(request: AIRequest, user: dict = Depends(get_current_us
     else:
         # kontext → aspect_ratio
         payload["aspect_ratio"] = params.get("aspect_ratio", "1:1")
+
+    payload["safety_tolerance"]=int(moderation_level) #MODERACION
+    if request.model =="flux-pro-1.1-ultra-model":
+        payload["raw"] = params.get("raw", False)
 
     # Debug mode: just log and return dummy task
     if os.getenv("BFL_DEBUG_MODE", "false").lower() == "true":
@@ -88,6 +93,8 @@ async def create_ai_task(request: AIRequest, user: dict = Depends(get_current_us
             status_code=resp.status_code,
             detail=f"Invalid BFL response: {resp.json()}",
         )
+    print("🔹 Sent payload:", payload)
+    print("🔹 BFL response:", resp.status_code, resp.text)
 
     task = resp.json()
     polling_url = task.get("polling_url")
@@ -156,7 +163,7 @@ async def check_ai_status(task_id: str):
             "raw": result
         }
 
-    elif status in ["Error", "Failed", "Request Moderated"]:
+    elif status not in ["Pending", "Processing", "Generating", "Ready"]:
         task["status"] = "Failed"
         details = result.get("details") or {}
         reasons = details.get("Moderation Reasons") or []
