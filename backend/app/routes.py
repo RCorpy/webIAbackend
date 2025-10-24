@@ -18,7 +18,8 @@ BFL_ENDPOINT = "https://api.bfl.ai/v1/flux-kontext-pro"
 
 tasks_store = {}
 
-moderation_level = 0 #0 is super moderated, 6 is not moderated
+moderation_level = 6 #0 is super moderated, 6 is not moderated
+image_prompt_strength = 1 #from 0 to 1, 1 is max strength
 
 @router.get("/credits")
 async def get_credits(user: dict = Depends(get_current_user)):
@@ -52,6 +53,8 @@ async def create_ai_task(request: AIRequest, user: dict = Depends(get_current_us
         bfl_endpoint = "https://api.bfl.ai/v1/flux-pro-1.1"
     elif request.model == "flux-pro-1.1-ultra-model":
         bfl_endpoint = "https://api.bfl.ai/v1/flux-pro-1.1-ultra"
+    elif request.model == "kontext-model":
+        bfl_endpoint = "https://api.bfl.ai/v1/flux-kontext-pro"
     else:
         bfl_endpoint = "https://api.bfl.ai/v1/flux-kontext-pro"
 
@@ -60,17 +63,31 @@ async def create_ai_task(request: AIRequest, user: dict = Depends(get_current_us
     params = request.parameters or {}
     print("THIS ARE PARAMS: " , params)
     
-    if request.model == "flux-pro-1.1-model":
-        # flux-pro-1.1 → width/height
-        payload["width"] = params.get("width", 1024)
-        payload["height"] = params.get("height", 1024)
-    else:
-        # kontext → aspect_ratio
-        payload["aspect_ratio"] = params.get("aspect_ratio", "1:1")
+    if params.get("sidebar_option") == "text-to-image":
+        if request.model == "flux-pro-1.1-model":
+            # flux-pro-1.1 → width/height
+            payload["width"] = params.get("width", 1024)
+            payload["height"] = params.get("height", 1024)
+        if request.model == "kontext-model":
+            # kontext → aspect_ratio
+            payload["aspect_ratio"] = params.get("aspect_ratio", "1:1")
+
+        if request.model =="flux-pro-1.1-ultra-model":
+            payload["raw"] = params.get("raw", False)
+            payload["aspect_ratio"] = params.get("aspect_ratio", "1:1")
+
+    if params.get("sidebar_option") == "image-to-image":
+        #always image here as prompt
+        payload["image_prompt"] = params.get("input_image", False)
+        payload["image_prompt_strength"] = params.get("image_prompt_strength", image_prompt_strength)
+
+        if request.model =="flux-pro-1.1-ultra-model":
+            payload["aspect_ratio"] = params.get("aspect_ratio", "1:1")
+
+        if request.model == "kontext-model":
+            payload["aspect_ratio"] = params.get("aspect_ratio", "1:1")
 
     payload["safety_tolerance"]=int(moderation_level) #MODERACION
-    if request.model =="flux-pro-1.1-ultra-model":
-        payload["raw"] = params.get("raw", False)
 
     # Debug mode: just log and return dummy task
     if os.getenv("BFL_DEBUG_MODE", "false").lower() == "true":
